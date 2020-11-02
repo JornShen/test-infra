@@ -33,7 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/clock"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"sigs.k8s.io/controller-runtime"
+	controllerruntime "sigs.k8s.io/controller-runtime"
 	ctrlruntimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -196,7 +196,7 @@ func (r *reconciler) defaultReconcile(request reconcile.Request) (reconcile.Resu
 		res = &reconcile.Result{}
 	}
 	if err != nil {
-		r.log.WithError(err).Error("Reconciliation failed")
+		r.log.WithError(err).WithField("name", request.Name).Error("Reconciliation failed")
 	}
 	return *res, err
 }
@@ -242,24 +242,7 @@ func (r *reconciler) terminateDupes(pj *prowv1.ProwJob) error {
 		return fmt.Errorf("failed to list prowjobs: %v", err)
 	}
 
-	return pjutil.TerminateOlderJobs(r.pjClient, r.log, pjs.Items, r.terminateDupesCleanup)
-}
-
-func (r *reconciler) terminateDupesCleanup(pj prowv1.ProwJob) error {
-	client, ok := r.buildClients[pj.ClusterAlias()]
-	if !ok {
-		return fmt.Errorf("no client for cluster %q present", pj.ClusterAlias())
-	}
-	podToDelete := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: r.config().PodNamespace,
-			Name:      pj.Name,
-		},
-	}
-	if err := client.Delete(r.ctx, podToDelete); err != nil && !kerrors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete pod %s/%s in cluster %s: %w", podToDelete.Namespace, podToDelete.Name, pj.ClusterAlias(), err)
-	}
-	return nil
+	return pjutil.TerminateOlderJobs(r.pjClient, r.log, pjs.Items)
 }
 
 // syncPendingJob syncs jobs for which we already created the test workload
@@ -281,7 +264,7 @@ func (r *reconciler) syncPendingJob(pj *prowv1.ProwJob) error {
 			}
 			pj.Status.State = prowv1.ErrorState
 			pj.SetComplete()
-			pj.Status.Description = "Job cannot be processed."
+			pj.Status.Description = fmt.Sprintf("Pod can not be created: %v", err)
 			r.log.WithFields(pjutil.ProwJobFields(pj)).WithError(err).Warning("Unprocessable pod.")
 		} else {
 			pj.Status.BuildID = id
@@ -301,8 +284,16 @@ func (r *reconciler) syncPendingJob(pj *prowv1.ProwJob) error {
 				return fmt.Errorf("unknown pod %s: unknown cluster alias %q", pod.Name, pj.ClusterAlias())
 			}
 
+			if finalizers := sets.NewString(pod.Finalizers...); finalizers.Has(kubernetesreporterapi.FinalizerName) {
+				// We want the end user to not see this, so we have to remove the finalizer, otherwise the pod hangs
+				oldPod := pod.DeepCopy()
+				pod.Finalizers = finalizers.Delete(kubernetesreporterapi.FinalizerName).UnsortedList()
+				if err := client.Patch(r.ctx, pod, ctrlruntimeclient.MergeFrom(oldPod)); err != nil {
+					return fmt.Errorf("failed to patch pod trying to remove %s finalizer: %w", kubernetesreporterapi.FinalizerName, err)
+				}
+			}
 			r.log.WithField("name", pj.ObjectMeta.Name).Debug("Delete Pod.")
-			return client.Delete(r.ctx, pod)
+			return ctrlruntimeclient.IgnoreNotFound(client.Delete(r.ctx, pod))
 
 		case corev1.PodSucceeded:
 			pj.SetComplete()
@@ -342,7 +333,7 @@ func (r *reconciler) syncPendingJob(pj *prowv1.ProwJob) error {
 					}
 				}
 				r.log.WithField("name", pj.ObjectMeta.Name).Debug("Delete Pod.")
-				return client.Delete(r.ctx, pod)
+				return ctrlruntimeclient.IgnoreNotFound(client.Delete(r.ctx, pod))
 			}
 			// Pod failed. Update ProwJob, talk to GitHub.
 			pj.SetComplete()
@@ -378,8 +369,13 @@ func (r *reconciler) syncPendingJob(pj *prowv1.ProwJob) error {
 				break
 			}
 			// Pod is running. Do nothing.
-			return nil
+			if pod.DeletionTimestamp == nil {
+				return nil
+			}
 		case corev1.PodRunning:
+			if pod.DeletionTimestamp != nil {
+				break
+			}
 			maxPodRunning := r.config().Plank.PodRunningTimeout.Duration
 			if pod.Status.StartTime.IsZero() || time.Since(pod.Status.StartTime.Time) < maxPodRunning {
 				// Pod is still running. Do nothing.
@@ -395,9 +391,40 @@ func (r *reconciler) syncPendingJob(pj *prowv1.ProwJob) error {
 				return fmt.Errorf("failed to delete pod %s/%s in cluster %s: %w", pod.Namespace, pod.Name, pj.ClusterAlias(), err)
 			}
 		default:
-			// other states, ignore
-			return nil
+			if pod.DeletionTimestamp == nil {
+				// other states, ignore
+				return nil
+			}
 		}
+	}
+
+	// This can happen in any phase and means the node got evicted after it became unresponsive. Delete the finalizer so the pod
+	// vanishes and we will silently re-create it in the next iteration.
+	if pod != nil && pod.DeletionTimestamp != nil && pod.Status.Reason == "NodeLost" {
+		r.log.WithFields(pjutil.ProwJobFields(pj)).Info("Pods Node got lost, deleting & restarting pod")
+		client, ok := r.buildClients[pj.ClusterAlias()]
+		if !ok {
+			return fmt.Errorf("unknown pod %s: unknown cluster alias %q", pod.Name, pj.ClusterAlias())
+		}
+
+		if finalizers := sets.NewString(pod.Finalizers...); finalizers.Has(kubernetesreporterapi.FinalizerName) {
+			// We want the end user to not see this, so we have to remove the finalizer, otherwise the pod hangs
+			oldPod := pod.DeepCopy()
+			pod.Finalizers = finalizers.Delete(kubernetesreporterapi.FinalizerName).UnsortedList()
+			if err := client.Patch(r.ctx, pod, ctrlruntimeclient.MergeFrom(oldPod)); err != nil {
+				return fmt.Errorf("failed to patch pod trying to remove %s finalizer: %w", kubernetesreporterapi.FinalizerName, err)
+			}
+		}
+
+		return nil
+	}
+
+	// If a pod gets deleted unexpectedly, it might be in any phase and will stick around until
+	// we complete the job if the kubernetes reporter is used, because it sets a finalizer.
+	if !pj.Complete() && pod != nil && pod.DeletionTimestamp != nil {
+		pj.SetComplete()
+		pj.Status.State = prowv1.ErrorState
+		pj.Status.Description = "Pod got deleted unexpectedly"
 	}
 
 	pj.Status.URL, err = pjutil.JobURL(r.config().Plank, *pj, r.log)
@@ -452,7 +479,7 @@ func (r *reconciler) syncTriggeredJob(pj *prowv1.ProwJob) (*reconcile.Result, er
 			}
 			pj.Status.State = prowv1.ErrorState
 			pj.SetComplete()
-			pj.Status.Description = "Job cannot be processed."
+			pj.Status.Description = fmt.Sprintf("Pod can not be created: %v", err)
 			logrus.WithField("job", pj.Spec.Job).WithError(err).Warning("Unprocessable pod.")
 		}
 	}
@@ -514,7 +541,7 @@ func (r *reconciler) syncAbortedJob(pj *prowv1.ProwJob) error {
 		Name:      pj.Name,
 		Namespace: r.config().PodNamespace,
 	}}
-	if err := buildClient.Delete(r.ctx, pod); err != nil && !kerrors.IsNotFound(err) {
+	if err := ctrlruntimeclient.IgnoreNotFound(buildClient.Delete(r.ctx, pod)); err != nil {
 		return fmt.Errorf("failed to delete pod %s/%s in cluster %s: %w", pod.Namespace, pod.Name, pj.ClusterAlias(), err)
 	}
 
@@ -562,7 +589,7 @@ func (r *reconciler) deletePod(pj *prowv1.ProwJob) error {
 		},
 	}
 
-	if err := buildClient.Delete(r.ctx, pod); err != nil && !kerrors.IsNotFound(err) {
+	if err := ctrlruntimeclient.IgnoreNotFound(buildClient.Delete(r.ctx, pod)); err != nil {
 		return fmt.Errorf("failed to delete pod: %w", err)
 	}
 
@@ -779,15 +806,15 @@ func prowJobIndexer(prowJobNamespace string) ctrlruntimeclient.IndexerFunc {
 }
 
 func optAllProwJobs() ctrlruntimeclient.ListOption {
-	return ctrlruntimeclient.MatchingField(prowJobIndexName, prowJobIndexKeyAll)
+	return ctrlruntimeclient.MatchingFields{prowJobIndexName: prowJobIndexKeyAll}
 }
 
 func optPendingProwJobs() ctrlruntimeclient.ListOption {
-	return ctrlruntimeclient.MatchingField(prowJobIndexName, prowJobIndexKeyPending)
+	return ctrlruntimeclient.MatchingFields{prowJobIndexName: prowJobIndexKeyPending}
 }
 
 func optPendingTriggeredJobsNamed(name string) ctrlruntimeclient.ListOption {
-	return ctrlruntimeclient.MatchingField(prowJobIndexName, pendingTriggeredIndexKeyByName(name))
+	return ctrlruntimeclient.MatchingFields{prowJobIndexName: pendingTriggeredIndexKeyByName(name)}
 }
 
 func didPodSucceed(p *corev1.Pod) bool {

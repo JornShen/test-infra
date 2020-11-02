@@ -3,10 +3,12 @@ postsubmits:
   - name: post-org-peribolos
     cluster: test-infra-trusted
     decorate: true
+    branches:
+    - ^master$
     max_concurrency: 1
     spec:
       containers:
-      - image: gcr.io/k8s-testimages/launcher.gcr.io/google/bazel:v20200824-5d057db-org
+      - image: gcr.io/k8s-testimages/launcher.gcr.io/google/bazel:v20201028-8000225-org
         command:
         - bazel
         args:
@@ -37,7 +39,8 @@ postsubmits:
       testgrid-tab-name: alpine
     decorate: true
     branches:
-    - master
+    - ^master$
+    max_concurrency: 1
     spec:
       serviceAccountName: pusher
       containers:
@@ -56,7 +59,8 @@ postsubmits:
       testgrid-tab-name: "alpine-bash"
     decorate: true
     branches:
-    - master
+    - ^master$
+    max_concurrency: 1
     spec:
       serviceAccountName: deployer # TODO(fejta): should be pusher
       containers:
@@ -76,7 +80,8 @@ postsubmits:
       testgrid-tab-name: git
     decorate: true
     branches:
-    - master
+    - ^master$
+    max_concurrency: 1
     spec:
       serviceAccountName: pusher
       containers:
@@ -92,7 +97,8 @@ postsubmits:
     run_if_changed: 'config/prow/cluster/'
     decorate: true
     branches:
-    - master
+    - ^master$
+    max_concurrency: 1
     spec:
       serviceAccountName: deployer
       containers:
@@ -113,10 +119,11 @@ postsubmits:
     run_if_changed: 'config/prow/config.yaml'
     decorate: true
     branches:
-    - master
+    - ^master$
+    max_concurrency: 1
     spec:
       containers:
-      - image: gcr.io/k8s-prow/hmac:v20200831-223e625607
+      - image: gcr.io/k8s-prow/hmac:v20201030-914f29394d
         command:
         - /hmac
         args:
@@ -156,6 +163,9 @@ postsubmits:
     cluster: test-infra-trusted
     run_if_changed: '^(WORKSPACE|load.bzl|repos.bzl|prow/prow.bzl|experiment/resultstore/)'
     decorate: true
+    branches:
+    - ^master$
+    max_concurrency: 1
     spec:
       serviceAccountName: pusher
       containers:
@@ -171,8 +181,11 @@ postsubmits:
   - name: post-test-infra-push-prow
     cluster: test-infra-trusted
     # Runs on more than just the Prow dir to include some additional images that we publish to gcr.io/k8s-prow.
-    run_if_changed: '^(WORKSPACE|load.bzl|repos.bzl|containers.bzl|prow|ghproxy|label_sync|robots/commenter|robots/pr-creator|robots/issue-creator|testgrid/cmd)/'
+    run_if_changed: '^(WORKSPACE|load.bzl|repos.bzl|containers.bzl|prow|ghproxy|label_sync|robots/commenter|robots/pr-creator|robots/issue-creator|testgrid/cmd|gcsweb)/'
     decorate: true
+    branches:
+    - ^master$
+    max_concurrency: 1
     spec:
       serviceAccountName: pusher
       containers:
@@ -185,6 +198,9 @@ postsubmits:
       testgrid-alert-email: kubernetes-sig-testing-alerts@googlegroups.com, k8s-infra-oncall@google.com
       testgrid-num-failures-to-alert: '1'
       description: builds and pushes all prow on each commit by running prow/push.sh
+    rerun_auth_config:
+      github_users:
+      - alvaroaleman
   - name: post-test-infra-push-kettle
     cluster: test-infra-trusted
     annotations:
@@ -199,7 +215,8 @@ postsubmits:
       timeout: 50m
       grace_period: 10m
     branches:
-    - master
+    - ^master$
+    max_concurrency: 1
     spec:
       serviceAccountName: deployer # TODO(fejta): should be pusher
       containers:
@@ -222,7 +239,8 @@ postsubmits:
       description: builds and pushes the triage image
     decorate: true
     branches:
-    - master
+    - ^master$
+    max_concurrency: 1
     spec:
       serviceAccountName: deployer # TODO(fejta): should be pusher
       containers:
@@ -245,7 +263,8 @@ postsubmits:
       description: builds and pushes launcher.gcr.io/google/bazel, adding support for a second version
     decorate: true
     branches:
-    - master
+    - ^master$
+    max_concurrency: 1
     spec:
       serviceAccountName: deployer # TODO(fejta): should be pusher
       containers:
@@ -267,7 +286,8 @@ postsubmits:
       description: builds and pushes the bazelbuild test image
     decorate: true
     branches:
-    - master
+    - ^master$
+    max_concurrency: 1
     spec:
       serviceAccountName: deployer # TODO(fejta): should be pusher
       containers:
@@ -290,7 +310,8 @@ postsubmits:
       description: builds and pushes the bazel-krte image
     decorate: true
     branches:
-    - master
+    - ^master$
+    max_concurrency: 1
     spec:
       serviceAccountName: deployer # TODO(fejta): should be pusher
       containers:
@@ -313,7 +334,8 @@ postsubmits:
       description: builds and pushes the bigquery image
     decorate: true
     branches:
-    - master
+    - ^master$
+    max_concurrency: 1
     spec:
       serviceAccountName: deployer # TODO(fejta): should be pusher
       containers:
@@ -336,7 +358,8 @@ postsubmits:
       description: builds and pushes the bootstrap image
     decorate: true
     branches:
-    - master
+    - ^master$
+    max_concurrency: 1
     spec:
       serviceAccountName: deployer # TODO(fejta): should be pusher
       containers:
@@ -359,7 +382,8 @@ postsubmits:
       description: builds and pushes the cluster-api image
     decorate: true
     branches:
-    - master
+    - ^master$
+    max_concurrency: 1
     spec:
       serviceAccountName: deployer # TODO(fejta): should be pusher
       containers:
@@ -382,7 +406,8 @@ postsubmits:
       description: builds and pushes the gcb-docker-gcloud image
     decorate: true
     branches:
-    - master
+    - ^master$
+    max_concurrency: 1
     spec:
       serviceAccountName: deployer # TODO(fejta): should be pusher
       containers:
@@ -405,7 +430,8 @@ postsubmits:
       description: builds and pushes the gcloud image
     decorate: true
     branches:
-    - master
+    - ^master$
+    max_concurrency: 1
     spec:
       serviceAccountName: deployer # TODO(fejta): should be pusher
       containers:
@@ -428,7 +454,8 @@ postsubmits:
       description: builds and pushes the kubekins-e2e image
     decorate: true
     branches:
-    - master
+    - ^master$
+    max_concurrency: 1
     spec:
       serviceAccountName: deployer # TODO(fejta): should be pusher
       containers:
@@ -451,7 +478,8 @@ postsubmits:
       description: builds and pushes the krte image
     decorate: true
     branches:
-    - master
+    - ^master$
+    max_concurrency: 1
     spec:
       serviceAccountName: deployer # TODO(fejta): should be pusher
       containers:
@@ -474,7 +502,8 @@ postsubmits:
       description: builds and pushes the kubemci image
     decorate: true
     branches:
-    - master
+    - ^master$
+    max_concurrency: 1
     spec:
       serviceAccountName: deployer # TODO(fejta): should be pusher
       containers:
@@ -497,7 +526,8 @@ postsubmits:
       description: builds and pushes the gubernator image
     decorate: true
     branches:
-    - master
+    - ^master$
+    max_concurrency: 1
     spec:
       serviceAccountName: deployer # TODO(fejta): should be pusher
       containers:
@@ -520,7 +550,8 @@ postsubmits:
       description: builds and pushes the image builder's own image
     decorate: true
     branches:
-    - master
+    - ^master$
+    max_concurrency: 1
     spec:
       serviceAccountName: deployer # TODO(fejta): should be pusher
       containers:
@@ -543,7 +574,8 @@ postsubmits:
       description: builds and pushes the benchmarkjunit image
     decorate: true
     branches:
-    - master
+    - ^master$
+    max_concurrency: 1
     spec:
       serviceAccountName: deployer # TODO(fejta): should be pusher
       containers:
@@ -567,6 +599,7 @@ postsubmits:
     decorate: true
     branches:
     - ^master$
+    max_concurrency: 1
     spec:
       serviceAccountName: deployer # TODO(fejta): should be pusher
       containers:
@@ -581,7 +614,7 @@ postsubmits:
   - name: post-test-infra-upload-oncall
     cluster: test-infra-trusted
     branches:
-    - master
+    - ^master$
     run_if_changed: '^maintenance/oncall.html$'
     decorate: true
     spec:
@@ -607,13 +640,14 @@ postsubmits:
   - name: post-test-infra-upload-triage
     cluster: test-infra-trusted
     branches:
-    - master
+    - ^master$
+    max_concurrency: 1
     run_if_changed: '^triage/Makefile$|^triage/[^/]+(\.html|\.js|\.css)$'
     decorate: true
     spec:
       serviceAccountName: pusher
       containers:
-      - image: gcr.io/k8s-testimages/kubekins-e2e:v20200831-9529f9c-master
+      - image: gcr.io/k8s-testimages/kubekins-e2e:v20201030-4553f14-master
         command:
         - make
         args:
@@ -633,7 +667,8 @@ postsubmits:
   - name: post-test-infra-upload-testgrid-config
     cluster: test-infra-trusted
     branches:
-    - master
+    - ^master$
+    max_concurrency: 1
     labels:
       preset-bazel-scratch-dir: "true"
     run_if_changed: '^config/(jobs|testgrids)/.*$'
@@ -656,7 +691,8 @@ postsubmits:
   - name: post-test-infra-upload-boskos-config
     cluster: test-infra-trusted
     branches:
-    - master
+    - ^master$
+    max_concurrency: 1
     run_if_changed: '^config/prow/cluster/boskos-resources.yaml$'
     decorate: true
     spec:
@@ -684,7 +720,7 @@ postsubmits:
     spec:
       serviceAccountName: pusher
       containers:
-      - image: us.gcr.io/k8s-artifacts-prod/artifact-promoter/cip:20200807-v2.3.1-258-gc35b3a0
+      - image: us.gcr.io/k8s-artifacts-prod/artifact-promoter/cip:v2.4.1
         command:
         - cip
         args:
@@ -711,13 +747,12 @@ postsubmits:
     spec:
       serviceAccountName: k8s-infra-gcr-promoter
       containers:
-      - image: us.gcr.io/k8s-artifacts-prod/artifact-promoter/cip:20200807-v2.3.1-258-gc35b3a0
+      - image: us.gcr.io/k8s-artifacts-prod/artifact-promoter/cip:v2.4.1
         command:
         - cip
         args:
         - -thin-manifest-dir=/home/prow/go/src/github.com/kubernetes/k8s.io/k8s.gcr.io
         - -dry-run=false
-        - -use-service-account
     annotations:
       testgrid-dashboards: sig-release-releng-blocking, wg-k8s-infra-k8sio
       testgrid-alert-email: k8s-infra-alerts@kubernetes.io, release-managers@kubernetes.io
@@ -735,7 +770,7 @@ postsubmits:
       testgrid-dashboards: sig-contribex-slack-infra
     spec:
       containers:
-      - image: gcr.io/k8s-tempelis/tempelis:v20190412-7c9b6e51
+      - image: gcr.io/k8s-staging-slack-infra/tempelis:v20200909-1eb97f5
         command:
         - /tempelis
         args:
@@ -876,7 +911,7 @@ periodics:
     base_ref: master
   spec:
     containers:
-    - image: gcr.io/k8s-testimages/kubekins-e2e:v20200831-9529f9c-master
+    - image: gcr.io/k8s-testimages/kubekins-e2e:v20201030-4553f14-master
       command:
       - runner.sh
       args:
@@ -891,6 +926,7 @@ periodics:
       - --github-repo=test-infra
       - --oncall-address=https://storage.googleapis.com/kubernetes-jenkins/oncall.json
       - --bump-prow-images
+      - --bump-boskos-images
       - --bump-test-images
       - --target-version=latest
       - --include-config-paths=.
@@ -924,7 +960,7 @@ periodics:
     base_ref: master
   spec:
     containers:
-    - image: gcr.io/k8s-testimages/launcher.gcr.io/google/bazel:v20200824-5d057db-test-infra
+    - image: gcr.io/k8s-testimages/launcher.gcr.io/google/bazel:v20201028-8000225-test-infra
       command:
       - bazel
       args:
@@ -960,7 +996,7 @@ periodics:
   spec:
     containers:
     - name: branchprotector
-      image: gcr.io/k8s-prow/branchprotector:v20200831-223e625607
+      image: gcr.io/k8s-prow/branchprotector:v20201030-914f29394d
       command:
       - /app/prow/cmd/branchprotector/app.binary
       args:
@@ -994,13 +1030,13 @@ periodics:
   spec:
     containers:
     - name: label-sync
-      image: gcr.io/k8s-prow/label_sync:v20200831-223e625607
+      image: gcr.io/k8s-prow/label_sync:v20201030-914f29394d
       command:
       - /app/label_sync/app.binary
       args:
       - --config=/etc/config/labels.yaml
       - --confirm=true
-      - --orgs=kubernetes,kubernetes-client,kubernetes-csi,kubernetes-incubator,kubernetes-sigs
+      - --orgs=kubernetes,kubernetes-client,kubernetes-csi,kubernetes-sigs
       - --token=/etc/github/oauth
       - --endpoint=http://ghproxy.default.svc.cluster.local
       - --endpoint=https://api.github.com
@@ -1046,23 +1082,12 @@ periodics:
     # https://github.com/kubernetes/k8s.io/pull/695.
     serviceAccountName: k8s-infra-gcr-promoter
     containers:
-    # TODO: Move the official cip image to a more serious location.
-    #
-    # To check the Go binary version in the image, run:
-    #
-    #   docker run --rm -it gcr.io/cip-demo-staging/cip:<tag> "cip -version"
-    #
-    # You can also nspect the /cip folder in the image's filesystem with an
-    # interactive bash session:
-    #
-    #   docker run --rm -it gcr.io/cip-demo-staging/cip:<tag> "cd /cip && bash"
-    - image: us.gcr.io/k8s-artifacts-prod/artifact-promoter/cip:20200807-v2.3.1-258-gc35b3a0
+    - image: us.gcr.io/k8s-artifacts-prod/artifact-promoter/cip:v2.4.1
       command:
       - cip
       args:
       - -thin-manifest-dir=/home/prow/go/src/github.com/kubernetes/k8s.io/k8s.gcr.io
       - -dry-run=false
-      - -use-service-account # @listx: deprecated; remove after verifying Workload Identity makes this obsolete
   annotations:
     testgrid-dashboards: sig-release-releng-blocking, wg-k8s-infra-k8sio
     testgrid-alert-email: k8s-infra-alerts@kubernetes.io, release-managers@kubernetes.io
@@ -1080,7 +1105,7 @@ periodics:
   spec:
     serviceAccountName: k8s-infra-gcr-promoter-bak
     containers:
-    - image: gcr.io/k8s-testimages/kubekins-e2e:v20200831-9529f9c-1.17
+    - image: gcr.io/k8s-testimages/kubekins-e2e:v20201030-4553f14-1.17
       command:
       - infra/gcp/backup_tools/backup.sh
       env:
@@ -1093,26 +1118,35 @@ periodics:
     testgrid-dashboards: sig-release-releng-blocking
     testgrid-alert-email: k8s-infra-alerts@kubernetes.io, release-managers@kubernetes.io
     testgrid-num-failures-to-alert: '1'
-- interval: 24h
+
+# This job is used as a heartbeat health check of the Prow instance's ability to run jobs.
+# Alerts expect it to run every 5 mins and will fire after 20 mins without a successful run.
+# Please keep this in sync with the `pull-test-infra-prow-checkconfig` job
+- name: ci-test-infra-prow-checkconfig
+  interval: 5m
   cluster: test-infra-trusted
-  max_concurrency: 1
-  name: ci-k8sio-vuln-dashboard-update
   decorate: true
   extra_refs:
   - org: kubernetes
-    repo: k8s.io
+    repo: test-infra
     base_ref: master
   spec:
-    serviceAccountName: k8s-infra-gcr-vuln-dashboard
     containers:
-    - image: us.gcr.io/k8s-artifacts-prod/artifact-promoter/cip:20200807-v2.3.1-258-gc35b3a0
+    - image: gcr.io/k8s-prow/checkconfig:v20201030-914f29394d
       command:
-      - dashboard
+      - /checkconfig
       args:
-        - -dashboard-file-path=/home/prow/go/src/github.com/kubernetes-sigs/k8s-container-image-promoter/dashboard/
-        - -vuln-target-project=k8s-artifacts-prod
-        - -dashboard-bucket=gs://k8s-artifacts-prod-vuln-dashboard
+      - --config-path=config/prow/config.yaml
+      - --job-config-path=config/jobs
+      - --plugin-config=config/prow/plugins.yaml
+      - --strict
+      - --warnings=mismatched-tide-lenient
+      - --warnings=tide-strict-branch
+      - --warnings=needs-ok-to-test
+      - --warnings=validate-owners
+      - --warnings=missing-trigger
+      - --warnings=validate-urls
+      - --warnings=unknown-fields
+      - --warnings=duplicate-job-refs
   annotations:
-    testgrid-dashboards: sig-release-releng-informing, wg-k8s-infra-k8sio
-    testgrid-alert-email: k8s-infra-alerts@kubernetes.io, release-managers@kubernetes.io
-    testgrid-num-failures-to-alert: '1'
+    testgrid-dashboards: sig-testing-misc

@@ -22,7 +22,9 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"k8s.io/apimachinery/pkg/util/diff"
+	utilpointer "k8s.io/utils/pointer"
 	"sigs.k8s.io/yaml"
 
 	"k8s.io/test-infra/prow/bugzilla"
@@ -714,9 +716,9 @@ func TestOptionsForBranch(t *testing.T) {
 	open, closed := true, false
 	yes, no := true, false
 	globalDefault, globalBranchDefault, orgDefault, orgBranchDefault, repoDefault, repoBranch, legacyBranch := "global-default", "global-branch-default", "my-org-default", "my-org-branch-default", "my-repo-default", "my-repo-branch", "my-legacy-branch"
-	post, pre, release, notabug := "POST", "PRE", "RELEASE_PENDING", "NOTABUG"
+	post, pre, release, notabug, new, reset := "POST", "PRE", "RELEASE_PENDING", "NOTABUG", "NEW", "RESET"
 	verifiedState, modifiedState := BugzillaBugState{Status: "VERIFIED"}, BugzillaBugState{Status: "MODIFIED"}
-	postState, preState, releaseState, notabugState := BugzillaBugState{Status: post}, BugzillaBugState{Status: pre}, BugzillaBugState{Status: release}, BugzillaBugState{Status: notabug}
+	postState, preState, releaseState, notabugState, newState, resetState := BugzillaBugState{Status: post}, BugzillaBugState{Status: pre}, BugzillaBugState{Status: release}, BugzillaBugState{Status: notabug}, BugzillaBugState{Status: new}, BugzillaBugState{Status: reset}
 	closedErrata := BugzillaBugState{Status: "CLOSED", Resolution: "ERRATA"}
 	orgAllowedGroups, repoAllowedGroups := []string{"test"}, []string{"security", "test"}
 
@@ -734,6 +736,8 @@ orgs:
         target_release: my-org-default
         state_after_validation:
           status: "PRE"
+        state_after_close:
+          status: "NEW"
         allowed_groups:
         - test
       "my-org-branch":
@@ -760,6 +764,8 @@ orgs:
             validate_by_default: true
             state_after_merge:
               status: NOTABUG
+            state_after_close:
+              status: RESET
             allowed_groups:
             - security
           "my-legacy-branch":
@@ -800,28 +806,28 @@ orgs:
 			org:      "my-org",
 			repo:     "some-repo",
 			branch:   "some-branch",
-			expected: BugzillaBranchOptions{IsOpen: &open, TargetRelease: &orgDefault, StateAfterValidation: &preState, AllowedGroups: orgAllowedGroups},
+			expected: BugzillaBranchOptions{IsOpen: &open, TargetRelease: &orgDefault, StateAfterValidation: &preState, AllowedGroups: orgAllowedGroups, StateAfterClose: &newState},
 		},
 		{
 			name:     "branch on configured org but not repo gets org branch default",
 			org:      "my-org",
 			repo:     "some-repo",
 			branch:   "my-org-branch",
-			expected: BugzillaBranchOptions{IsOpen: &open, TargetRelease: &orgBranchDefault, StateAfterValidation: &postState, AllowedGroups: orgAllowedGroups},
+			expected: BugzillaBranchOptions{IsOpen: &open, TargetRelease: &orgBranchDefault, StateAfterValidation: &postState, AllowedGroups: orgAllowedGroups, StateAfterClose: &newState},
 		},
 		{
 			name:     "branch on configured org and repo gets repo default",
 			org:      "my-org",
 			repo:     "my-repo",
 			branch:   "some-branch",
-			expected: BugzillaBranchOptions{ValidateByDefault: &no, IsOpen: &closed, TargetRelease: &repoDefault, ValidStates: &[]BugzillaBugState{verifiedState}, StateAfterValidation: &preState, StateAfterMerge: &releaseState, AllowedGroups: orgAllowedGroups},
+			expected: BugzillaBranchOptions{ValidateByDefault: &no, IsOpen: &closed, TargetRelease: &repoDefault, ValidStates: &[]BugzillaBugState{verifiedState}, StateAfterValidation: &preState, StateAfterMerge: &releaseState, AllowedGroups: orgAllowedGroups, StateAfterClose: &newState},
 		},
 		{
 			name:     "branch on configured org and repo gets branch config",
 			org:      "my-org",
 			repo:     "my-repo",
 			branch:   "my-repo-branch",
-			expected: BugzillaBranchOptions{ValidateByDefault: &yes, IsOpen: &closed, TargetRelease: &repoBranch, ValidStates: &[]BugzillaBugState{modifiedState, closedErrata}, StateAfterValidation: &preState, StateAfterMerge: &notabugState, AllowedGroups: repoAllowedGroups},
+			expected: BugzillaBranchOptions{ValidateByDefault: &yes, IsOpen: &closed, TargetRelease: &repoBranch, ValidStates: &[]BugzillaBugState{modifiedState, closedErrata}, StateAfterValidation: &preState, StateAfterMerge: &notabugState, AllowedGroups: repoAllowedGroups, StateAfterClose: &resetState},
 		},
 	}
 	for _, testCase := range testCases {
@@ -851,8 +857,8 @@ orgs:
 			org:  "my-org",
 			repo: "some-repo",
 			expected: map[string]BugzillaBranchOptions{
-				"*":             {IsOpen: &open, TargetRelease: &orgDefault, StateAfterValidation: &preState, AllowedGroups: orgAllowedGroups},
-				"my-org-branch": {IsOpen: &open, TargetRelease: &orgBranchDefault, StateAfterValidation: &postState, AllowedGroups: orgAllowedGroups},
+				"*":             {IsOpen: &open, TargetRelease: &orgDefault, StateAfterValidation: &preState, AllowedGroups: orgAllowedGroups, StateAfterClose: &newState},
+				"my-org-branch": {IsOpen: &open, TargetRelease: &orgBranchDefault, StateAfterValidation: &postState, AllowedGroups: orgAllowedGroups, StateAfterClose: &newState},
 			},
 		},
 		{
@@ -868,6 +874,7 @@ orgs:
 					StateAfterValidation: &preState,
 					StateAfterMerge:      &releaseState,
 					AllowedGroups:        orgAllowedGroups,
+					StateAfterClose:      &newState,
 				},
 				"my-repo-branch": {
 					ValidateByDefault:    &yes,
@@ -877,6 +884,7 @@ orgs:
 					StateAfterValidation: &preState,
 					StateAfterMerge:      &notabugState,
 					AllowedGroups:        repoAllowedGroups,
+					StateAfterClose:      &resetState,
 				},
 				"my-org-branch": {
 					ValidateByDefault:    &no,
@@ -886,6 +894,7 @@ orgs:
 					StateAfterValidation: &postState,
 					StateAfterMerge:      &releaseState,
 					AllowedGroups:        orgAllowedGroups,
+					StateAfterClose:      &newState,
 				},
 				"my-legacy-branch": {
 					ValidateByDefault:    &yes,
@@ -896,6 +905,7 @@ orgs:
 					StateAfterValidation: &modifiedState,
 					StateAfterMerge:      &notabugState,
 					AllowedGroups:        orgAllowedGroups,
+					StateAfterClose:      &newState,
 				},
 			},
 		},
@@ -1281,6 +1291,76 @@ func TestValidateConfigUpdater(t *testing.T) {
 			}
 			if tc.expected != nil && actual != nil && tc.expected.Error() != actual.Error() {
 				t.Errorf("expected error '%v', but it is '%v'", tc.expected, actual)
+			}
+		})
+	}
+}
+
+func TestConfigUpdaterResolve(t *testing.T) {
+	testCases := []struct {
+		name           string
+		in             ConfigUpdater
+		expectedConfig ConfigUpdater
+		exppectedError string
+	}{
+		{
+			name:           "both cluster and cluster_groups is set, error",
+			in:             ConfigUpdater{Maps: map[string]ConfigMapSpec{"map": {Clusters: map[string][]string{"cluster": nil}, ClusterGroups: []string{"group"}}}},
+			exppectedError: "item maps.map contains both clusters and cluster_groups",
+		},
+		{
+			name:           "inexistent cluster_group is referenced, error",
+			in:             ConfigUpdater{Maps: map[string]ConfigMapSpec{"map": {ClusterGroups: []string{"group"}}}},
+			exppectedError: "item maps.map.cluster_groups.0 references inexistent cluster group named group",
+		},
+		{
+			name: "successful resolving",
+			in: ConfigUpdater{
+				ClusterGroups: map[string]ClusterGroup{
+					"some-group":    {Clusters: []string{"cluster-a"}, Namespaces: []string{"namespace-a"}},
+					"another-group": {Clusters: []string{"cluster-b"}, Namespaces: []string{"namespace-b"}},
+				},
+				Maps: map[string]ConfigMapSpec{"map": {
+					Name:                 "name",
+					Key:                  "key",
+					Namespace:            "namespace",
+					AdditionalNamespaces: []string{"additional-ns"},
+					GZIP:                 utilpointer.BoolPtr(true),
+					ClusterGroups:        []string{"some-group", "another-group"}},
+				},
+			},
+			expectedConfig: ConfigUpdater{
+				Maps: map[string]ConfigMapSpec{"map": {
+					Name:                 "name",
+					Key:                  "key",
+					Namespace:            "namespace",
+					AdditionalNamespaces: []string{"additional-ns"},
+					GZIP:                 utilpointer.BoolPtr(true),
+					Clusters: map[string][]string{
+						"cluster-a": {"namespace-a"},
+						"cluster-b": {"namespace-b"},
+					}}},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+
+			var errMsg string
+			err := tc.in.resolve()
+			if err != nil {
+				errMsg = err.Error()
+			}
+			if errMsg != tc.exppectedError {
+				t.Fatalf("expected error %s, got error %s", tc.exppectedError, errMsg)
+			}
+			if err != nil {
+				return
+			}
+
+			if diff := cmp.Diff(tc.expectedConfig, tc.in); diff != "" {
+				t.Errorf("expected config differs from actual config: %s", diff)
 			}
 		})
 	}

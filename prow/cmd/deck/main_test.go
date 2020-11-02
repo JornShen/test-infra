@@ -588,7 +588,7 @@ func TestTide(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Marshaling: %v", err)
 		}
-		fmt.Fprintf(w, string(b))
+		fmt.Fprint(w, string(b))
 	}))
 	ca := &config.Agent{}
 	ca.Set(&config.Config{
@@ -661,7 +661,7 @@ func TestTideHistory(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Marshaling: %v", err)
 		}
-		fmt.Fprintf(w, string(b))
+		fmt.Fprint(w, string(b))
 	}))
 
 	ta := tideAgent{
@@ -718,7 +718,7 @@ func TestHelp(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Marshaling: %v", err)
 		}
-		fmt.Fprintf(w, string(b))
+		fmt.Fprint(w, string(b))
 	}))
 	ha := &helpAgent{
 		path: s.URL,
@@ -1164,5 +1164,35 @@ func TestCanTriggerJob(t *testing.T) {
 		if result != tc.expectAllowed {
 			t.Errorf("got result %t, expected %t", result, tc.expectAllowed)
 		}
+	}
+}
+
+func TestHttpStatusForError(t *testing.T) {
+	testCases := []struct {
+		name           string
+		input          error
+		expectedStatus int
+	}{
+		{
+			name:           "normal_error",
+			input:          errors.New("some error message"),
+			expectedStatus: http.StatusInternalServerError,
+		},
+		{
+			name: "httpError",
+			input: httpError{
+				error:      errors.New("some error message"),
+				statusCode: http.StatusGone,
+			},
+			expectedStatus: http.StatusGone,
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(nested *testing.T) {
+			actual := httpStatusForError(tc.input)
+			if actual != tc.expectedStatus {
+				t.Fatalf("unexpected HTTP status (expected=%v, actual=%v) for error: %v", tc.expectedStatus, actual, tc.input)
+			}
+		})
 	}
 }

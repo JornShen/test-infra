@@ -58,6 +58,7 @@ else:
     # This is safe because the only way we get here is by faling all attempts
     raise
 
+
 class Build:
     """
     Represent Metadata and Details of a build. Leveraging the information in
@@ -103,11 +104,12 @@ class Build:
             if self.path.startswith(bucket):
                 prefix = meta['prefix']
                 break
-
+        #if job path not in buckets.yaml or gs://kubernetes-jenkins/pr-logs it is unmatched
+        else:
             if self.path.startswith('gs://kubernetes-jenkins/pr-logs'):
                 prefix = 'pr:'
             else:
-                raise ValueError('unknown build path')
+                raise ValueError(f'unknown build path for {self.path} in known bucket paths')
         build = os.path.basename(self.path)
         job = prefix + os.path.basename(os.path.dirname(self.path))
         self.job = job
@@ -149,7 +151,12 @@ class Build:
 def parse_junit(xml):
     """Generate failed tests as a series of dicts. Ignore skipped tests."""
     # NOTE: this is modified from gubernator/view_build.py
-    tree = ET.fromstring(xml)
+    try:
+        tree = ET.fromstring(xml)
+    except ET.ParseError:
+        print("Malformed xml, skipping")
+        yield from [] #return empty itterator to skip results for this test
+        return
 
     # pylint: disable=redefined-outer-name
 
@@ -170,22 +177,22 @@ def parse_junit(xml):
         time = float(child_node.attrib.get('time') or 0) #time val can be ''
         failure_text = None
         for param in child_node.findall('failure'):
-            failure_text = param.text
+            failure_text = param.text or param.attrib.get('message', 'No Failure Message Found')
         skipped = child_node.findall('skipped')
         return time, failure_text, skipped
 
     if tree.tag == 'testsuite':
         for child in tree.findall('testcase'):
-            name = child.attrib['name']
+            name = child.attrib.get('name', '<unspecified>')
             time, failure_text, skipped = parse_result(child)
             if skipped:
                 continue
             yield make_result(name, time, failure_text)
     elif tree.tag == 'testsuites':
         for testsuite in tree:
-            suite_name = testsuite.attrib['name']
+            suite_name = testsuite.attrib.get('name', '<unspecified>')
             for child in testsuite.findall('testcase'):
-                name = '%s %s' % (suite_name, child.attrib['name'])
+                name = '%s %s' % (suite_name, child.attrib.get('name', '<unspecified>'))
                 time, failure_text, skipped = parse_result(child)
                 if skipped:
                     continue

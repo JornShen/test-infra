@@ -147,9 +147,6 @@ func newGKE(provider, project, zone, region, network, image, imageFamily, imageP
 	}
 	g.network = network
 
-	if image == "" {
-		return nil, fmt.Errorf("--gcp-node-image must be set for GKE deployment")
-	}
 	if strings.ToUpper(image) == "CUSTOM" {
 		if imageFamily == "" || imageProject == "" {
 			return nil, fmt.Errorf("--image-family and --image-project must be set for GKE deployment if --gcp-node-image=CUSTOM")
@@ -324,11 +321,17 @@ func (g *gkeDeployer) Up() error {
 	args = append(args,
 		"--project="+g.project,
 		g.location,
-		"--machine-type="+def.MachineType,
-		"--image-type="+g.image,
-		"--num-nodes="+strconv.Itoa(def.Nodes),
 		"--network="+g.network,
 	)
+	if def.Nodes > 0 {
+		args = append(args, "--num-nodes="+strconv.Itoa(def.Nodes))
+	}
+	if def.MachineType != "" {
+		args = append(args, "--machine-type="+def.MachineType)
+	}
+	if g.image != "" {
+		args = append(args, "--image-type="+g.image)
+	}
 	args = append(args, def.ExtraArgs...)
 	if strings.ToUpper(g.image) == "CUSTOM" {
 		args = append(args, "--image-family="+g.imageFamily)
@@ -361,9 +364,6 @@ func (g *gkeDeployer) Up() error {
 
 	if *gkeReleaseChannel != "" {
 		args = append(args, "--release-channel="+*gkeReleaseChannel)
-		if strings.EqualFold(*gkeReleaseChannel, "rapid") {
-			args = append(args, "--enable-autorepair")
-		}
 	} else {
 		// TODO(zmerlynn): The version should be plumbed through Extract
 		// or a separate flag rather than magic env variables.
@@ -384,8 +384,10 @@ func (g *gkeDeployer) Up() error {
 			"--cluster=" + g.cluster,
 			"--project=" + g.project,
 			g.location,
-			"--machine-type=" + pool.MachineType,
 			"--num-nodes=" + strconv.Itoa(pool.Nodes)}
+		if pool.MachineType != "" {
+			poolArgs = append(poolArgs, "--machine-type="+pool.MachineType)
+		}
 		poolArgs = append(poolArgs, pool.ExtraArgs...)
 		if err := control.FinishRunning(exec.Command("gcloud", g.containerArgs(poolArgs...)...)); err != nil {
 			return fmt.Errorf("error creating node pool %q: %v", poolName, err)
@@ -410,8 +412,7 @@ func (g *gkeDeployer) DumpClusterLogs(localPath, gcsPath string) error {
 	// - %[2]s is the zone
 	// - %[3]s is the OS distribution of nodes
 	// - %[4]s is a filter composed of the instance groups
-	// - %[5]s is the zone for logexporter daemonset (defined only for multizonal or regional clusters)
-	// - %[6]s is the log-dump.sh command line
+	// - %[5]s is the log-dump.sh command line
 	const gkeLogDumpTemplate = `
 function log_dump_custom_get_instances() {
   if [[ $1 == "master" ]]; then return 0; fi
@@ -423,8 +424,7 @@ export PROJECT=%[1]s
 export ZONE='%[2]s'
 export KUBERNETES_PROVIDER=gke
 export KUBE_NODE_OS_DISTRIBUTION='%[3]s'
-export LOGEXPORTER_ZONE='%[5]s'
-%[6]s
+%[5]s
 `
 	// Prevent an obvious injection.
 	if strings.Contains(localPath, "'") || strings.Contains(gcsPath, "'") {
@@ -440,14 +440,13 @@ export LOGEXPORTER_ZONE='%[5]s'
 		filter := fmt.Sprintf("(metadata.created-by ~ %s)", ig.path)
 		perZoneFilters[ig.zone] = append(perZoneFilters[ig.zone], filter)
 	}
-	isMultizonalOrRegional := len(perZoneFilters) > 1
 
 	// Generate the log-dump.sh command-line
-	var dumpCmd string
+	dumpCmd := logDumpPath("gke")
 	if gcsPath == "" {
-		dumpCmd = fmt.Sprintf("./cluster/log-dump/log-dump.sh '%s'", localPath)
+		dumpCmd = fmt.Sprintf("%s '%s'", dumpCmd, localPath)
 	} else {
-		dumpCmd = fmt.Sprintf("./cluster/log-dump/log-dump.sh '%s' '%s'", localPath, gcsPath)
+		dumpCmd = fmt.Sprintf("%s '%s' '%s'", dumpCmd, localPath, gcsPath)
 	}
 
 	// Try to setup cluster access if it's possible. If credentials are already set, this will be no-op. Access to
@@ -466,16 +465,11 @@ export LOGEXPORTER_ZONE='%[5]s'
 
 	var errorMessages []string
 	for zone, filters := range perZoneFilters {
-		logexporterZone := ""
-		if isMultizonalOrRegional {
-			logexporterZone = zone
-		}
 		err := control.FinishRunning(exec.Command("bash", "-c", fmt.Sprintf(gkeLogDumpTemplate,
 			g.project,
 			zone,
 			os.Getenv("NODE_OS_DISTRIBUTION"),
 			strings.Join(filters, " OR "),
-			logexporterZone,
 			dumpCmd)))
 		if err != nil {
 			errorMessages = append(errorMessages, err.Error())

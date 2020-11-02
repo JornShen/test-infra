@@ -33,6 +33,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	prowv1 "k8s.io/test-infra/prow/apis/prowjobs/v1"
+	"k8s.io/test-infra/prow/config"
 	pkgio "k8s.io/test-infra/prow/io"
 	"k8s.io/test-infra/prow/io/providers"
 	"k8s.io/test-infra/prow/pod-utils/gcs"
@@ -75,11 +76,20 @@ type storageBucket interface {
 	readObject(ctx context.Context, key string) ([]byte, error)
 }
 
-// blobStorageBucket is our real implementation of storageBucket
+// blobStorageBucket is our real implementation of storageBucket.
+// Use `newBlobStorageBucket` to instantiate (includes bucket-level validation).
 type blobStorageBucket struct {
 	name            string
 	storageProvider string
 	pkgio.Opener
+}
+
+// newBlobStorageBucket validates the bucketName and returns a new instance of blobStorageBucket.
+func newBlobStorageBucket(bucketName, storageProvider string, config *config.Config, opener pkgio.Opener) (blobStorageBucket, error) {
+	if err := config.ValidateStorageBucket(bucketName); err != nil {
+		return blobStorageBucket{}, fmt.Errorf("could not instantiate storage bucket: %v", err)
+	}
+	return blobStorageBucket{bucketName, storageProvider, opener}, nil
 }
 
 type jobHistoryTemplate struct {
@@ -336,15 +346,23 @@ func getBuildData(ctx context.Context, bucket storageBucket, dir string) (buildD
 		return b, fmt.Errorf("failed to read started.json: %v", err)
 	}
 	b.Started = time.Unix(started.Timestamp, 0)
-	if commitHash, err := getPullCommitHash(started.Pull); err == nil {
-		b.commitHash = commitHash
-	}
 	finished := gcs.Finished{}
 	err = readJSON(ctx, bucket, path.Join(dir, prowv1.FinishedStatusFile), &finished)
 	if err != nil {
 		b.Result = "Pending"
+		for _, ref := range started.Repos {
+			if strings.Contains(ref, ","+started.Pull+":") {
+				started.Pull = ref
+				break
+			}
+		}
 		logrus.Debugf("failed to read finished.json (job might be unfinished): %v", err)
 	}
+
+	if commitHash, err := getPullCommitHash(started.Pull); err == nil {
+		b.commitHash = commitHash
+	}
+
 	// Testgrid metadata.Finished is deprecating the Revision field, however
 	// the actual finished.json is still using revision and maps to DeprecatedRevision.
 	// TODO(ttyang): update both to match when fejta completely removes DeprecatedRevision.
@@ -355,7 +373,7 @@ func getBuildData(ctx context.Context, bucket storageBucket, dir string) (buildD
 	if finished.Timestamp != nil {
 		b.Duration = time.Unix(*finished.Timestamp, 0).Sub(b.Started)
 	} else {
-		b.Duration = time.Now().Sub(b.Started).Round(time.Second)
+		b.Duration = time.Since(b.Started).Round(time.Second)
 	}
 	if finished.Result != "" {
 		b.Result = finished.Result
@@ -392,7 +410,7 @@ func (a int64slice) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a int64slice) Less(i, j int) bool { return a[i] < a[j] }
 
 // Gets job history from the bucket specified in config.
-func getJobHistory(ctx context.Context, url *url.URL, opener pkgio.Opener) (jobHistoryTemplate, error) {
+func getJobHistory(ctx context.Context, url *url.URL, cfg config.Getter, opener pkgio.Opener) (jobHistoryTemplate, error) {
 	start := time.Now()
 	tmpl := jobHistoryTemplate{}
 
@@ -400,9 +418,11 @@ func getJobHistory(ctx context.Context, url *url.URL, opener pkgio.Opener) (jobH
 	if err != nil {
 		return tmpl, fmt.Errorf("invalid url %s: %v", url.String(), err)
 	}
+	bucket, err := newBlobStorageBucket(bucketName, storageProvider, cfg(), opener)
+	if err != nil {
+		return tmpl, err
+	}
 	tmpl.Name = root
-	bucket := blobStorageBucket{bucketName, storageProvider, opener}
-
 	latest, err := readLatestBuild(ctx, bucket, root)
 	if err != nil {
 		return tmpl, fmt.Errorf("failed to locate build data: %v", err)
@@ -472,7 +492,7 @@ func getJobHistory(ctx context.Context, url *url.URL, opener pkgio.Opener) (jobH
 		tmpl.Builds[b.index] = b
 	}
 
-	elapsed := time.Now().Sub(start)
+	elapsed := time.Since(start)
 	logrus.Infof("loaded %s in %v", url.Path, elapsed)
 	return tmpl, nil
 }

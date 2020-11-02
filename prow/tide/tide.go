@@ -1094,9 +1094,8 @@ func (c *Controller) mergePRs(sp subpool, prs []PullRequest) error {
 			return c.ghc.Merge(sp.org, sp.repo, int(pr.Number), ghMergeDetails)
 		})
 		if err != nil {
-			log.WithError(err).Error("Merge failed.")
-			errs = append(errs, err)
-			failed = append(failed, int(pr.Number))
+			// These are user errors, shouldn't be printed as tide errors
+			log.WithError(err).Debug("Merge failed.")
 		} else {
 			log.Info("Merged.")
 			merged = append(merged, int(pr.Number))
@@ -1241,7 +1240,7 @@ func (c *Controller) nonFailedBatchForJobAndRefsExists(jobName string, refs *pro
 	pjs := &prowapi.ProwJobList{}
 	if err := c.prowJobClient.List(c.ctx,
 		pjs,
-		ctrlruntimeclient.MatchingField(nonFailedBatchByNameBaseAndPullsIndexName, nonFailedBatchByNameBaseAndPullsIndexKey(jobName, refs)),
+		ctrlruntimeclient.MatchingFields{nonFailedBatchByNameBaseAndPullsIndexName: nonFailedBatchByNameBaseAndPullsIndexKey(jobName, refs)},
 		ctrlruntimeclient.InNamespace(c.config().ProwJobNamespace),
 	); err != nil {
 		c.logger.WithError(err).Error("Failed to list non-failed batches")
@@ -1614,7 +1613,7 @@ func (c *Controller) dividePool(pool map[string]PullRequest) (map[string]*subpoo
 		err := c.prowJobClient.List(
 			c.ctx,
 			pjs,
-			ctrlruntimeclient.MatchingField(cacheIndexName, cacheIndexKey(sp.org, sp.repo, sp.branch, sp.sha)),
+			ctrlruntimeclient.MatchingFields{cacheIndexName: cacheIndexKey(sp.org, sp.repo, sp.branch, sp.sha)},
 			ctrlruntimeclient.InNamespace(c.config().ProwJobNamespace))
 		if err != nil {
 			return nil, fmt.Errorf("failed to list jobs for subpool %s: %v", subpoolkey, err)
@@ -1673,7 +1672,26 @@ type Commit struct {
 	Status struct {
 		Contexts []Context
 	}
-	OID githubql.String `graphql:"oid"`
+	OID               githubql.String `graphql:"oid"`
+	StatusCheckRollup StatusCheckRollup
+}
+
+type StatusCheckRollup struct {
+	Contexts StatusCheckRollupContext `graphql:"contexts(last: 100)"`
+}
+
+type StatusCheckRollupContext struct {
+	Nodes []CheckRunNode
+}
+
+type CheckRunNode struct {
+	CheckRun CheckRun `graphql:"... on CheckRun"`
+}
+
+type CheckRun struct {
+	Name       githubql.String
+	Conclusion githubql.String
+	Status     githubql.String
 }
 
 // Context holds graphql response data for github contexts.
@@ -1698,7 +1716,7 @@ type searchQuery struct {
 			EndCursor   githubql.String
 		}
 		Nodes []PRNode
-	} `graphql:"search(type: ISSUE, first: 100, after: $searchCursor, query: $query)"`
+	} `graphql:"search(type: ISSUE, first: 37, after: $searchCursor, query: $query)"`
 }
 
 func (pr *PullRequest) logFields() logrus.Fields {
@@ -1723,7 +1741,7 @@ func (pr *PullRequest) logFields() logrus.Fields {
 func headContexts(log *logrus.Entry, ghc githubClient, pr *PullRequest) ([]Context, error) {
 	for _, node := range pr.Commits.Nodes {
 		if node.Commit.OID == pr.HeadRefOID {
-			return node.Commit.Status.Contexts, nil
+			return append(node.Commit.Status.Contexts, checkRunNodesToContexts(log, node.Commit.StatusCheckRollup.Contexts.Nodes)...), nil
 		}
 	}
 	// We didn't get the head commit from the query (the commits must not be
@@ -1732,6 +1750,8 @@ func headContexts(log *logrus.Entry, ghc githubClient, pr *PullRequest) ([]Conte
 	org := string(pr.Repository.Owner.Login)
 	repo := string(pr.Repository.Name)
 	// Log this event so we can tune the number of commits we list to minimize this.
+	// TODO alvaroaleman: Add checkrun support here. Doesn't seem to happen often though,
+	// openshift doesn't have a single occurrence of this in the past seven days.
 	log.Warnf("'last' %d commits didn't contain logical last commit. Querying GitHub...", len(pr.Commits.Nodes))
 	combined, err := ghc.GetCombinedStatus(org, repo, string(pr.HeadRefOID))
 	if err != nil {
@@ -1823,4 +1843,48 @@ func nonFailedBatchByNameBaseAndPullsIndexFunc(obj runtime.Object) []string {
 	}
 
 	return []string{nonFailedBatchByNameBaseAndPullsIndexKey(pj.Spec.Job, pj.Spec.Refs)}
+}
+
+func checkRunNodesToContexts(log *logrus.Entry, nodes []CheckRunNode) []Context {
+	var result []Context
+	for _, node := range nodes {
+		// GitHub gives us an empty checkrun per status context. In theory they could
+		// at some point decide to create a virtual check run per status context.
+		// If that were to happen, we would retrieve redundant data as we get the
+		// status context both directly as a status context and as a checkrun, however
+		// the actual data in there should be identical, hence this isn't a problem.
+		if string(node.CheckRun.Name) == "" {
+			continue
+		}
+		result = append(result, checkRunToContext(node.CheckRun))
+	}
+	if len(result) > 0 {
+		log.WithField("checkruns", len(result)).Debug("Transformed checkruns to contexts")
+	}
+	return result
+}
+
+const (
+	checkRunStatusCompleted   = githubql.String("COMPLETED")
+	checkRunConclusionNeutral = githubql.String("NEUTRAL")
+)
+
+// checkRunToContext translates a checkRun to a classic context
+// ref: https://developer.github.com/v3/checks/runs/#parameters
+func checkRunToContext(checkRun CheckRun) Context {
+	context := Context{
+		Context: checkRun.Name,
+	}
+	if checkRun.Status != checkRunStatusCompleted {
+		context.State = githubql.StatusStatePending
+		return context
+	}
+
+	if checkRun.Conclusion == checkRunConclusionNeutral || checkRun.Conclusion == githubql.String(githubql.StatusStateSuccess) {
+		context.State = githubql.StatusStateSuccess
+		return context
+	}
+
+	context.State = githubql.StatusStateFailure
+	return context
 }
